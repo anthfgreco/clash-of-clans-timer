@@ -59,6 +59,16 @@ function getSecondLargestTimeUnit(seconds: number): string {
   return `${amount}${second.label}`;
 }
 
+function formatMMSS(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const s = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${m}:${s}`;
+}
+
 function App() {
   const [timeInput, setTimeInput] = useState<string>("");
   const [timerType, setTimerType] = useState<"builder" | "research">("builder");
@@ -74,15 +84,32 @@ function App() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setTimers((prevTimers) =>
-        prevTimers
+      setTimers((prevTimers) => {
+        const updated = prevTimers
           .map((timer) => {
             const multiplier = getPotionMultiplier(timer.type);
             const newRemaining = timer.remaining - 1 * multiplier;
             return { ...timer, remaining: newRemaining > 0 ? newRemaining : 0 };
           })
-          .filter((timer) => timer.remaining > 0),
-      );
+          .filter((timer) => timer.remaining > 0);
+
+        // Update document title with smallest timer AFTER potion adjustment
+        let minAdjustedSeconds = Infinity;
+        for (const t of updated) {
+          const adjusted = t.remaining / getPotionMultiplier(t.type);
+          if (adjusted < minAdjustedSeconds) {
+            minAdjustedSeconds = adjusted;
+          }
+        }
+
+        if (isFinite(minAdjustedSeconds)) {
+          document.title = formatMMSS(Math.ceil(minAdjustedSeconds));
+        } else {
+          document.title = "Clash of Clans Timer App";
+        }
+
+        return updated;
+      });
     }, 1000);
 
     return () => clearInterval(interval);
@@ -101,6 +128,10 @@ function App() {
       setTimers((prevTimers) => [...prevTimers, newTimer]);
       setTimeInput("");
     }
+  };
+
+  const handleRemoveTimer = (id: number) => {
+    setTimers((prevTimers) => prevTimers.filter((t) => t.id !== id));
   };
 
   return (
@@ -223,6 +254,18 @@ function App() {
             <li key={timer.id}>
               [{timer.type}] {formatTime(Math.ceil(timer.remaining))}
               {multiplier > 1 && ` (${label})`}
+              <button
+                onClick={() => handleRemoveTimer(timer.id)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "red",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                }}
+              >
+                ×
+              </button>
             </li>
           );
         })}
