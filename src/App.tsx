@@ -223,6 +223,9 @@ function App() {
               if (e.key === "Enter") handleAddTimer();
             }}
             placeholder="1h30m20s / 1w2d3h"
+            style={{
+              fontSize: "16px",
+            }}
           />
         </label>
 

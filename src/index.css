@@ -30,6 +30,14 @@ body {
   min-height: 100vh;
 }
 
+/* Don't center body vertically for mobile */
+@media (max-width: 640px) {
+  body {
+    place-items: flex-start;
+    padding: 1em;
+  }
+}
+
 h1 {
   font-size: 3.2em;
   line-height: 1.1;
