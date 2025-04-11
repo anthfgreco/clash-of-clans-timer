@@ -201,9 +201,10 @@ function App() {
       <div
         style={{
           display: "flex",
-          flexDirection: "column",
+          flexDirection: "row",
           gap: "10px",
           alignItems: "center",
+          justifyContent: "center",
         }}
       >
         <label
@@ -228,11 +229,11 @@ function App() {
         <button
           onClick={handleAddTimer}
           style={{
-            width: "200px",
+            width: "50px",
             padding: "2px",
           }}
         >
-          Add Timer
+          Add
         </button>
       </div>
 
@@ -261,7 +262,9 @@ function App() {
                   border: "none",
                   color: "red",
                   fontWeight: "bold",
+                  fontSize: "20px",
                   cursor: "pointer",
+                  padding: "4px",
                 }}
               >
                 ×
