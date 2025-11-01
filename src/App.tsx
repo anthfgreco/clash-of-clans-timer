@@ -26,7 +26,7 @@ function formatTime(totalSeconds: number): string {
   const days = Math.floor((totalSeconds % (7 * 86400)) / 86400);
   const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
+  const seconds = Math.floor(totalSeconds % 60);
   const parts: string[] = [];
   if (weeks) parts.push(`${weeks}w`);
   if (days || (parts.length > 0 && (hours || minutes || seconds)))
@@ -39,22 +39,6 @@ function formatTime(totalSeconds: number): string {
     else parts.push(`${seconds}s`);
   }
   return parts.join(" ");
-}
-
-function getSecondLargestTimeUnit(seconds: number): string {
-  const timeUnits = [
-    { label: "w", value: 604800 },
-    { label: "d", value: 86400 },
-    { label: "h", value: 3600 },
-    { label: "m", value: 60 },
-  ];
-  const activeUnits = timeUnits.filter(
-    (u) => Math.floor(seconds / u.value) > 0,
-  );
-  if (activeUnits.length === 0) return "<1m";
-  const second = activeUnits.length > 1 ? activeUnits[1] : activeUnits[0];
-  const amount = Math.floor(seconds / second.value);
-  return `${amount}${second.label}`;
 }
 
 function formatMMSS(seconds: number): string {
@@ -179,31 +163,29 @@ export function App() {
     setTimers((prev) => prev.filter((t) => t.endAtMs > nowMs));
   }, [nowMs, timers, notificationPermission]);
 
-  // Update document title using soonest adjusted remaining (visual only)
+  // Update document title with the soonest REAL-TIME remaining timer
   useEffect(() => {
-    let minAdjusted = Infinity;
-    for (const t of timers) {
-      const baseRemaining = Math.max(0, Math.ceil((t.endAtMs - nowMs) / 1000));
-      const adjusted = baseRemaining / getPotionMultiplier(t.type);
-      if (adjusted < minAdjusted) minAdjusted = adjusted;
+    if (timers.length === 0) {
+      document.title = isAlarmPlaying ? "!! DONE !!" : DEFAULT_TITLE;
+      return;
     }
-    if (timers.length > 0 && isFinite(minAdjusted)) {
-      document.title = formatMMSS(Math.max(0, Math.ceil(minAdjusted)));
+
+    const soonestEndMs = Math.min(...timers.map((t) => t.endAtMs));
+    const soonestRemainingSeconds = Math.max(
+      0,
+      Math.ceil((soonestEndMs - nowMs) / 1000),
+    );
+
+    if (isFinite(soonestRemainingSeconds)) {
+      document.title = `${formatMMSS(soonestRemainingSeconds)} - CoC Timer`;
     } else {
       document.title = isAlarmPlaying ? "!! DONE !!" : DEFAULT_TITLE;
     }
-  }, [
-    timers,
-    nowMs,
-    useBuilderPotion,
-    useResearchPotion,
-    isAlarmPlaying,
-    getPotionMultiplier,
-  ]);
+  }, [timers, nowMs, isAlarmPlaying]);
 
   const handleAddTimer = () => {
-    const duration = parseTimeInput(timeInput);
-    if (duration > 0) {
+    const durationInSeconds = parseTimeInput(timeInput);
+    if (durationInSeconds > 0) {
       // Warm up audio so autoplay is allowed later
       if (alarmSoundRef.current?.paused && !isAlarmPlaying) {
         alarmSoundRef.current
@@ -219,9 +201,12 @@ export function App() {
 
       handleStopAlarm();
 
+      const multiplier = getPotionMultiplier(timerType);
+      const realDurationMs = (durationInSeconds / multiplier) * 1000;
+
       const newTimer: Timer = {
         id: Date.now(),
-        endAtMs: Date.now() + duration * 1000,
+        endAtMs: Date.now() + realDurationMs,
         type: timerType,
       };
 
@@ -428,17 +413,16 @@ export function App() {
       >
         {timers.map((timer) => {
           const multiplier = getPotionMultiplier(timer.type);
-          const baseRemaining = Math.max(
+          const realSecondsRemaining = Math.max(
             0,
             Math.ceil((timer.endAtMs - nowMs) / 1000),
           );
-          const adjustedSeconds = Math.max(0, baseRemaining / multiplier);
-          const label = getSecondLargestTimeUnit(adjustedSeconds);
+          const gameSecondsRemaining = realSecondsRemaining * multiplier;
 
           return (
             <li key={timer.id}>
-              [{timer.type}] {formatTime(baseRemaining)}
-              {multiplier > 1 && ` (${label})`}
+              [{timer.type}] {formatTime(gameSecondsRemaining)}
+              {multiplier > 1 && ` (real: ${formatTime(realSecondsRemaining)})`}
               <button
                 onClick={() => handleRemoveTimer(timer.id)}
                 style={{
