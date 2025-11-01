@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocalStorage } from "usehooks-ts";
 import "./App.css";
 
 interface Timer {
@@ -55,16 +56,35 @@ const DEFAULT_TITLE = "Clash of Clans Timer App";
 const ALARM_SOUND_SRC = "/clash_of_clans.mp3";
 
 export function App() {
-  const [timeInput, setTimeInput] = useState<string>("");
-  const [timerType, setTimerType] = useState<"builder" | "research" | "pet">(
-    "builder",
+  const [timeInput, setTimeInput] = useLocalStorage<string>(
+    "coc:timeInput",
+    "",
   );
-  const [useBuilderPotion, setUseBuilderPotion] = useState<boolean>(true);
-  const [useResearchPotion, setUseResearchPotion] = useState<boolean>(true);
-  const [usePetPotion, setUsePetPotion] = useState<boolean>(true);
-  const [timers, setTimers] = useState<Timer[]>([]);
+
+  const [timerType, setTimerType] = useLocalStorage<
+    "builder" | "research" | "pet"
+  >("coc:timerType", "builder");
+
+  const [useBuilderPotion, setUseBuilderPotion] = useLocalStorage<boolean>(
+    "coc:potion:builder",
+    true,
+  );
+
+  const [useResearchPotion, setUseResearchPotion] = useLocalStorage<boolean>(
+    "coc:potion:research",
+    true,
+  );
+
+  const [usePetPotion, setUsePetPotion] = useLocalStorage<boolean>(
+    "coc:potion:pet",
+    true,
+  );
+
+  const [timers, setTimers] = useLocalStorage<Timer[]>("coc:timers", []);
+
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission | null>(null);
+
   const [isAlarmPlaying, setIsAlarmPlaying] = useState<boolean>(false);
 
   const [nowMs, setNowMs] = useState<number>(Date.now());
