@@ -3,22 +3,19 @@ import "./App.css";
 
 interface Timer {
   id: number;
-  remaining: number;
-  type: "builder" | "research";
+  endAtMs: number;
+  type: "builder" | "research" | "pet";
 }
 
 function parseTimeInput(input: string): number {
   const regex = /(?:(\d+)w)?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/i;
   const matches = input.match(regex);
-
   if (!matches) return 0;
-
   const weeks = parseInt(matches[1] || "0", 10);
   const days = parseInt(matches[2] || "0", 10);
   const hours = parseInt(matches[3] || "0", 10);
   const minutes = parseInt(matches[4] || "0", 10);
   const seconds = parseInt(matches[5] || "0", 10);
-
   return (
     weeks * 7 * 86400 + days * 86400 + hours * 3600 + minutes * 60 + seconds
   );
@@ -30,26 +27,17 @@ function formatTime(totalSeconds: number): string {
   const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  const parts = [];
-
+  const parts: string[] = [];
   if (weeks) parts.push(`${weeks}w`);
-
   if (days || (parts.length > 0 && (hours || minutes || seconds)))
     parts.push(`${days}d`);
-
   if (hours || (parts.length > 0 && (minutes || seconds)))
     parts.push(`${hours}h`);
-
   if (minutes || (parts.length > 0 && seconds)) parts.push(`${minutes}m`);
-
   if (seconds || parts.length === 0) {
-    if (parts.length > 0) {
-      parts.push(`${seconds.toString().padStart(2, "0")}s`);
-    } else {
-      parts.push(`${seconds}s`);
-    }
+    if (parts.length > 0) parts.push(`${seconds.toString().padStart(2, "0")}s`);
+    else parts.push(`${seconds}s`);
   }
-
   return parts.join(" ");
 }
 
@@ -60,16 +48,12 @@ function getSecondLargestTimeUnit(seconds: number): string {
     { label: "h", value: 3600 },
     { label: "m", value: 60 },
   ];
-
   const activeUnits = timeUnits.filter(
-    (unit) => Math.floor(seconds / unit.value) > 0,
+    (u) => Math.floor(seconds / u.value) > 0,
   );
-
   if (activeUnits.length === 0) return "<1m";
-
   const second = activeUnits.length > 1 ? activeUnits[1] : activeUnits[0];
   const amount = Math.floor(seconds / second.value);
-
   return `${amount}${second.label}`;
 }
 
@@ -86,15 +70,20 @@ function formatMMSS(seconds: number): string {
 const DEFAULT_TITLE = "Clash of Clans Timer App";
 const ALARM_SOUND_SRC = "/clash_of_clans.mp3";
 
-function App() {
+export function App() {
   const [timeInput, setTimeInput] = useState<string>("");
-  const [timerType, setTimerType] = useState<"builder" | "research">("builder");
+  const [timerType, setTimerType] = useState<"builder" | "research" | "pet">(
+    "builder",
+  );
   const [useBuilderPotion, setUseBuilderPotion] = useState<boolean>(true);
   const [useResearchPotion, setUseResearchPotion] = useState<boolean>(true);
+  const [usePetPotion, setUsePetPotion] = useState<boolean>(true);
   const [timers, setTimers] = useState<Timer[]>([]);
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission | null>(null);
   const [isAlarmPlaying, setIsAlarmPlaying] = useState<boolean>(false);
+
+  const [nowMs, setNowMs] = useState<number>(Date.now());
 
   const alarmSoundRef = useRef<HTMLAudioElement | null>(null);
 
@@ -106,10 +95,18 @@ function App() {
       } else {
         console.warn("Browser does not support Notifications.");
       }
+
       // Audio
       alarmSoundRef.current = new Audio(ALARM_SOUND_SRC);
       alarmSoundRef.current.load();
     }
+  }, []);
+
+  // Visual tick (1s).
+  // Can be slower for less renders.
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
   }, []);
 
   const handleStopAlarm = useCallback(() => {
@@ -117,138 +114,106 @@ function App() {
       alarmSoundRef.current.pause();
       alarmSoundRef.current.currentTime = 0;
       setIsAlarmPlaying(false);
-      console.log("Alarm stopped."); // Optional: for debugging
+      console.log("Alarm stopped.");
     }
   }, [isAlarmPlaying]);
 
-  // Handle global click listener to stop alarm
+  // Global click listener to stop alarm
   useEffect(() => {
-    // Define the handler for the listener
     const clickListener = () => {
-      if (isAlarmPlaying) {
-        handleStopAlarm();
-      }
+      if (isAlarmPlaying) handleStopAlarm();
     };
-
-    // Add the listener to the document
     document.addEventListener("click", clickListener);
     console.log("Global click listener added.");
-
     return () => {
       document.removeEventListener("click", clickListener);
       console.log("Global click listener removed.");
     };
   }, [isAlarmPlaying, handleStopAlarm]);
 
-  const getPotionMultiplier = (type: "builder" | "research") => {
-    if (type === "builder") return useBuilderPotion ? 10 : 1;
-    if (type === "research") return useResearchPotion ? 24 : 1;
-    return 1;
-  };
+  const getPotionMultiplier = useCallback(
+    (type: "builder" | "research" | "pet"): number => {
+      if (type === "builder") return useBuilderPotion ? 10 : 1;
+      if (type === "research") return useResearchPotion ? 24 : 1;
+      if (type === "pet") return usePetPotion ? 24 : 1;
+      return 1;
+    },
+    [useBuilderPotion, useResearchPotion, usePetPotion],
+  );
 
-  // Timer tick effect
+  // Fire alarms for due timers (endAtMs <= nowMs) and remove them.
   useEffect(() => {
-    const interval = setInterval(() => {
-      let timerFinishedThisTick = false;
-      const finishedTimerTypes: Set<string> = new Set();
+    if (timers.length === 0) return;
 
-      setTimers((prevTimers) => {
-        const updatedTimers = prevTimers.map((timer) => {
-          const multiplier = getPotionMultiplier(timer.type);
-          const decrement = 1 * multiplier;
-          const newRemaining = timer.remaining - decrement;
+    const due = timers.filter((t) => t.endAtMs <= nowMs);
+    if (due.length === 0) return;
 
-          if (timer.remaining > 0 && newRemaining <= 0) {
-            timerFinishedThisTick = true;
-            finishedTimerTypes.add(timer.type);
-          }
-
-          return { ...timer, remaining: newRemaining > 0 ? newRemaining : 0 };
+    // Alarm
+    if (alarmSoundRef.current) {
+      alarmSoundRef.current.pause();
+      alarmSoundRef.current.currentTime = 0;
+      alarmSoundRef.current
+        .play()
+        .then(() => {
+          setIsAlarmPlaying(true);
+          console.log("Alarm playing...");
+        })
+        .catch((error) => {
+          console.error("Error playing sound:", error);
+          setIsAlarmPlaying(false);
         });
+    }
 
-        const activeTimers = updatedTimers.filter(
-          (timer) => timer.remaining > 0,
-        );
-
-        // Play soud and show notification
-        if (timerFinishedThisTick) {
-          // Start alarm
-          if (alarmSoundRef.current) {
-            // Ensure previous alarm is stopped
-            alarmSoundRef.current.pause();
-            alarmSoundRef.current.currentTime = 0;
-            // Play the sound
-            alarmSoundRef.current
-              .play()
-              .then(() => {
-                setIsAlarmPlaying(true);
-                console.log("Alarm playing...");
-              })
-              .catch((error) => {
-                console.error("Error playing sound:", error);
-                setIsAlarmPlaying(false);
-              });
-          }
-
-          // Notification
-          if (notificationPermission === "granted") {
-            const finishedTypesString =
-              Array.from(finishedTimerTypes).join(", ");
-            const notificationTitle = "Clash Timer Done!";
-            const notificationBody = `Your ${finishedTypesString} timer(s) finished!`;
-            new Notification(notificationTitle, {
-              body: notificationBody,
-              tag: "clash-timer-done",
-            });
-          }
-        }
-
-        // Update document title
-        let minAdjustedSeconds = Infinity;
-        for (const t of activeTimers) {
-          const adjusted = t.remaining / getPotionMultiplier(t.type);
-          if (adjusted < minAdjustedSeconds) {
-            minAdjustedSeconds = adjusted;
-          }
-        }
-
-        if (activeTimers.length > 0 && isFinite(minAdjustedSeconds)) {
-          document.title = formatMMSS(Math.ceil(minAdjustedSeconds));
-        } else {
-          if (!isAlarmPlaying) {
-            document.title = DEFAULT_TITLE;
-          } else {
-            document.title = "!! DONE !!";
-          }
-        }
-
-        return activeTimers;
+    // Notification
+    if (notificationPermission === "granted") {
+      const finishedTypes = Array.from(new Set(due.map((d) => d.type))).join(
+        ", ",
+      );
+      new Notification("Clash Timer Done!", {
+        body: `Your ${finishedTypes} timer(s) finished!`,
+        tag: "clash-timer-done",
       });
-    }, 1000);
+    }
 
-    return () => clearInterval(interval);
+    // Remove due timers
+    setTimers((prev) => prev.filter((t) => t.endAtMs > nowMs));
+  }, [nowMs, timers, notificationPermission]);
+
+  // Update document title using soonest adjusted remaining (visual only)
+  useEffect(() => {
+    let minAdjusted = Infinity;
+    for (const t of timers) {
+      const baseRemaining = Math.max(0, Math.ceil((t.endAtMs - nowMs) / 1000));
+      const adjusted = baseRemaining / getPotionMultiplier(t.type);
+      if (adjusted < minAdjusted) minAdjusted = adjusted;
+    }
+    if (timers.length > 0 && isFinite(minAdjusted)) {
+      document.title = formatMMSS(Math.max(0, Math.ceil(minAdjusted)));
+    } else {
+      document.title = isAlarmPlaying ? "!! DONE !!" : DEFAULT_TITLE;
+    }
   }, [
+    timers,
+    nowMs,
     useBuilderPotion,
     useResearchPotion,
-    notificationPermission,
     isAlarmPlaying,
+    getPotionMultiplier,
   ]);
 
   const handleAddTimer = () => {
     const duration = parseTimeInput(timeInput);
     if (duration > 0) {
+      // Warm up audio so autoplay is allowed later
       if (alarmSoundRef.current?.paused && !isAlarmPlaying) {
-        // Check if not already playing alarm
         alarmSoundRef.current
           .play()
           .then(() => {
             alarmSoundRef.current?.pause();
-            if (alarmSoundRef.current) {
-              alarmSoundRef.current.currentTime = 0;
-            }
+            if (alarmSoundRef.current) alarmSoundRef.current.currentTime = 0;
           })
           .catch(() => {
-            /* Ignore error */
+            /* ignore */
           });
       }
 
@@ -256,17 +221,17 @@ function App() {
 
       const newTimer: Timer = {
         id: Date.now(),
-        remaining: duration,
+        endAtMs: Date.now() + duration * 1000,
         type: timerType,
       };
 
-      setTimers((prevTimers) => [...prevTimers, newTimer]);
+      setTimers((prev) => [...prev, newTimer]);
       setTimeInput("");
     }
   };
 
   const handleRemoveTimer = (id: number) => {
-    setTimers((prevTimers) => prevTimers.filter((t) => t.id !== id));
+    setTimers((prev) => prev.filter((t) => t.id !== id));
   };
 
   const requestNotifications = () => {
@@ -358,6 +323,14 @@ function App() {
           />
           Use Research Potion (24x speed)
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={usePetPotion}
+            onChange={(e) => setUsePetPotion(e.target.checked)}
+          />
+          Use Pet Potion (24x speed)
+        </label>
       </div>
 
       <br />
@@ -390,6 +363,16 @@ function App() {
           />
           Research Timer
         </label>
+        <label>
+          <input
+            type="radio"
+            name="timerType"
+            value="pet"
+            checked={timerType === "pet"}
+            onChange={() => setTimerType("pet")}
+          />
+          Pet Timer
+        </label>
       </div>
 
       <br />
@@ -419,9 +402,7 @@ function App() {
               if (e.key === "Enter") handleAddTimer();
             }}
             placeholder="1h30m20s / 1w2d3h"
-            style={{
-              fontSize: "16px",
-            }}
+            style={{ fontSize: "16px" }}
           />
         </label>
 
@@ -447,12 +428,16 @@ function App() {
       >
         {timers.map((timer) => {
           const multiplier = getPotionMultiplier(timer.type);
-          const adjustedSeconds = Math.max(0, timer.remaining / multiplier);
+          const baseRemaining = Math.max(
+            0,
+            Math.ceil((timer.endAtMs - nowMs) / 1000),
+          );
+          const adjustedSeconds = Math.max(0, baseRemaining / multiplier);
           const label = getSecondLargestTimeUnit(adjustedSeconds);
 
           return (
             <li key={timer.id}>
-              [{timer.type}] {formatTime(Math.ceil(timer.remaining))}
+              [{timer.type}] {formatTime(baseRemaining)}
               {multiplier > 1 && ` (${label})`}
               <button
                 onClick={() => handleRemoveTimer(timer.id)}
@@ -494,5 +479,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
