@@ -91,6 +91,8 @@ export function App() {
 
   const alarmSoundRef = useRef<HTMLAudioElement | null>(null);
 
+  const audioPrimedRef = useRef<boolean>(false);
+
   // Initialize Audio and Notifications
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -101,7 +103,18 @@ export function App() {
       }
 
       // Audio
-      alarmSoundRef.current = new Audio(ALARM_SOUND_SRC);
+      alarmSoundRef.current = new Audio();
+      alarmSoundRef.current.preload = "auto";
+      // start with no source so media keys can't resume anything
+      alarmSoundRef.current.src = "";
+      try {
+        // avoid remote casting controls engaging this element
+        if ("disableRemotePlayback" in alarmSoundRef.current) {
+          alarmSoundRef.current.disableRemotePlayback = true;
+        }
+      } catch {
+        // ignore
+      }
       alarmSoundRef.current.load();
     }
   }, []);
@@ -121,6 +134,40 @@ export function App() {
       console.log("Alarm stopped.");
     }
   }, [isAlarmPlaying]);
+
+  // Prime audio once per session without leaving a resumable media element.
+  const primeAudio = useCallback(async () => {
+    if (!alarmSoundRef.current || audioPrimedRef.current) return;
+    const el = alarmSoundRef.current;
+    try {
+      el.muted = true;
+      el.volume = 0;
+      await el.play();
+      el.pause();
+      el.currentTime = 0;
+      el.muted = false;
+      // Disarm: clear source so OS play key cannot resume this element.
+      el.src = "";
+      el.load();
+      audioPrimedRef.current = true;
+      console.log("Audio primed (disarmed).");
+    } catch {
+      // ignore; user gesture may be required, we'll retry later
+    }
+  }, []);
+
+  // Ensure the alarm sound is ready right before real playback.
+  const ensureAlarmReady = useCallback((): boolean => {
+    const el = alarmSoundRef.current;
+    if (!el) return false;
+    if (!el.src) {
+      el.src = ALARM_SOUND_SRC;
+      el.load();
+    }
+    el.muted = false;
+    el.volume = 1;
+    return true;
+  }, []);
 
   // Global click listener to stop alarm
   useEffect(() => {
@@ -154,8 +201,11 @@ export function App() {
 
     // Alarm
     if (alarmSoundRef.current) {
-      alarmSoundRef.current.pause();
-      alarmSoundRef.current.currentTime = 0;
+      const ok = ensureAlarmReady();
+      if (ok) {
+        alarmSoundRef.current.pause();
+        alarmSoundRef.current.currentTime = 0;
+      }
       alarmSoundRef.current
         .play()
         .then(() => {
@@ -181,7 +231,7 @@ export function App() {
 
     // Remove due timers
     setTimers((prev) => prev.filter((t) => t.endAtMs > nowMs));
-  }, [nowMs, timers, notificationPermission]);
+  }, [nowMs, timers, notificationPermission, setTimers, ensureAlarmReady]);
 
   // Update document title with the soonest REAL-TIME remaining timer
   useEffect(() => {
@@ -206,18 +256,7 @@ export function App() {
   const handleAddTimer = () => {
     const durationInSeconds = parseTimeInput(timeInput);
     if (durationInSeconds > 0) {
-      // Warm up audio so autoplay is allowed later
-      if (alarmSoundRef.current?.paused && !isAlarmPlaying) {
-        alarmSoundRef.current
-          .play()
-          .then(() => {
-            alarmSoundRef.current?.pause();
-            if (alarmSoundRef.current) alarmSoundRef.current.currentTime = 0;
-          })
-          .catch(() => {
-            /* ignore */
-          });
-      }
+      primeAudio();
 
       handleStopAlarm();
 
